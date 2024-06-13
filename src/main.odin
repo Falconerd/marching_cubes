@@ -1,13 +1,8 @@
-package main
+package marching_cubes
 
-import "core:fmt"
-import "core:math"
-import "core:math/linalg"
 import "core:math/rand"
-import "core:strings"
-import rl "vendor:raylib"
 
-// Create a cube from a mask of vertex values
+// Create a random cube from a mask of vertex values
 // bits of 0 will be below isolevel
 // bits of 1 will be above isolevel
 cube_from_mask :: proc(m: u8, allocator := context.temp_allocator) -> []u8 {
@@ -21,6 +16,7 @@ cube_from_mask :: proc(m: u8, allocator := context.temp_allocator) -> []u8 {
 	return cube[:]
 }
 
+
 // Determine the configuration based on the cube values
 determine_configuration :: proc(cube: []u8) -> u8 {
 	configuration := u8(0)
@@ -32,7 +28,7 @@ determine_configuration :: proc(cube: []u8) -> u8 {
 	return configuration
 }
 
-vertex_interpolate :: proc(edge: u8) -> [3]f32 {
+vertex_interpolate_midpoint :: proc(edge: u8) -> [3]f32 {
 	// Edges follow ascending path 0 -> 1, 1 -> 2...
 	// Vertical edges are last following the same order
 	// So 0 -> 4, 1 -> 5...
@@ -104,21 +100,23 @@ vertex_interpolate :: proc(edge: u8) -> [3]f32 {
 }
 
 // Given 8 scalar field vaules as a cube, generate the triangles
-generate_triangles :: proc(cube: []u8, offset: [3]f32, scale: f32) -> [][3][3]f32 {
-	triangles := make([dynamic][3][3]f32)
+generate_triangles :: proc(
+	cube: []u8,
+	offset: [3]f32,
+	scale: f32,
+	interpolate := vertex_interpolate_midpoint,
+	allocator := context.allocator,
+) -> [][3][3]f32 {
+	triangles := make([dynamic][3][3]f32, allocator)
 	configuration := determine_configuration(cube)
 
 	if configuration != 0 && configuration != 255 {
-		vertices := make([][3]f32, 12)
+		vertices := make([][3]f32, 12, allocator)
 
 		// TODO: Figure out how to skip edges only using required ones
 		for edge: u8 = 0; edge < 12; edge += 1 {
-			vertices[edge] = vertex_interpolate(edge) * scale + offset
+			vertices[edge] = interpolate(edge) * scale + offset
 		}
-		for i in 0 ..= 11 {
-			fmt.print(i, ":", vertices[i], " ")
-		}
-		fmt.println("indices:", triangle_table[configuration])
 
 		for indices in triangle_table[configuration] {
 			append(
@@ -139,99 +137,5 @@ cube_corner_pos_from_index :: proc(index: int) -> [3]f32 {
 		return base_positions[index]
 	} else {
 		return base_positions[index - 4] + top_offset
-	}
-}
-
-main :: proc() {
-	rl.InitWindow(1280, 720, "Marching Cubes")
-
-	camera := rl.Camera {
-		position   = {-1.25, 0.7, -0.8},
-		target     = {0.5, 0.5, 0.5},
-		up         = {0, 1, 0},
-		fovy       = 85,
-		projection = rl.CameraProjection.PERSPECTIVE,
-	}
-
-	rl.DisableCursor()
-	rl.SetTargetFPS(60)
-
-	render_texture := rl.LoadRenderTexture(1280, 720)
-	defer rl.UnloadRenderTexture(render_texture)
-
-	// cube := cube_from_mask(0b00000000)
-	// triangles := generate_triangles(cube[:], {}, 1)
-	mask: u8
-	timer: f32
-	started := false
-	cube := cube_from_mask(mask)
-	fmt.println("cube:", cube)
-	triangles := generate_triangles(cube[:], {}, 1)
-
-	for !rl.WindowShouldClose() {
-		if started {
-			timer += rl.GetFrameTime()
-		}
-		if rl.IsKeyPressed(rl.KeyboardKey.N) {
-			started = true
-		}
-		if timer >= 0.6 {
-			timer = 0
-			mask += 1
-			mask = mask % u8(255)
-			cube = cube_from_mask(mask)
-			triangles = generate_triangles(cube[:], {}, 1)
-		}
-
-		rl.UpdateCamera(&camera, rl.CameraMode.ORBITAL)
-
-		rl.BeginTextureMode(render_texture)
-		{
-			rl.ClearBackground(rl.BLACK)
-
-			rl.BeginMode3D(camera)
-			{
-				rl.DrawCubeWires({0.5, 0.5, 0.5}, 1, 1, 1, {255, 255, 255, 100})
-
-				for t in triangles {
-					rl.DrawTriangle3D(t.x, t.y, t.z, {255, 255, 255, 128})
-					rl.DrawLine3D(t.x, t.y, rl.RED)
-					rl.DrawLine3D(t.y, t.z, rl.GREEN)
-					rl.DrawLine3D(t.z, t.x, rl.WHITE)
-				}
-
-				for corner, i in cube {
-					pos := cube_corner_pos_from_index(i)
-					if corner >= 8 {
-						rl.DrawCubeV(pos, {0.05, 0.05, 0.05}, rl.RED)
-					} else {
-						rl.DrawCubeV(pos, {0.05, 0.05, 0.05}, rl.BLUE)
-					}
-				}
-
-				rl.DrawLine3D({}, {0.1, 0, 0}, rl.BLUE)
-				rl.DrawLine3D({}, {0, 0.1, 0}, rl.GREEN)
-				rl.DrawLine3D({}, {0, 0, 0.1}, rl.RED)
-			}
-			rl.EndMode3D()
-		}
-		rl.EndTextureMode()
-
-		rl.BeginDrawing()
-		{
-			rl.ClearBackground(rl.BLACK)
-			rl.DrawTexturePro(
-				render_texture.texture,
-				{0, 0, f32(render_texture.texture.width), -f32(render_texture.texture.height)},
-				{0, 0, 1280, 720},
-				{0, 0},
-				0,
-				rl.WHITE,
-			)
-
-			s := fmt.ctprintf("Variant: %d", mask)
-			rl.DrawText(s, 4, 4, 10, rl.WHITE)
-		}
-		rl.EndDrawing()
 	}
 }

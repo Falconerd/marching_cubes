@@ -1,4 +1,4 @@
-package main
+package marching_cubes
 
 edge_table: [256]int = {
 	0x0,
