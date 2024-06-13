@@ -4,12 +4,13 @@ import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:math/rand"
+import "core:strings"
 import rl "vendor:raylib"
 
 // Create a cube from a mask of vertex values
 // bits of 0 will be below isolevel
 // bits of 1 will be above isolevel
-cube_from_mask :: proc(m: int, allocator := context.temp_allocator) -> []u8 {
+cube_from_mask :: proc(m: u8, allocator := context.temp_allocator) -> []u8 {
 	cube := make([]u8, 8, allocator)
 	for i in 0 ..= 7 {
 		cube[i] = u8(rand.uint32() % 8)
@@ -106,16 +107,18 @@ vertex_interpolate :: proc(edge: u8) -> [3]f32 {
 generate_triangles :: proc(cube: []u8, offset: [3]f32, scale: f32) -> [][3][3]f32 {
 	triangles := make([dynamic][3][3]f32)
 	configuration := determine_configuration(cube)
-	cube_index := edge_table[configuration]
 
-	if cube_index != 0 && cube_index != 255 {
+	if configuration != 0 && configuration != 255 {
 		vertices := make([][3]f32, 12)
 
+		// TODO: Figure out how to skip edges only using required ones
 		for edge: u8 = 0; edge < 12; edge += 1 {
-			if 1 << edge & cube_index > 0 {
-				vertices[edge + 1] = vertex_interpolate(edge) * scale + offset
-			}
+			vertices[edge] = vertex_interpolate(edge) * scale + offset
 		}
+		for i in 0 ..= 11 {
+			fmt.print(i, ":", vertices[i], " ")
+		}
+		fmt.println("indices:", triangle_table[configuration])
 
 		for indices in triangle_table[configuration] {
 			append(
@@ -127,11 +130,23 @@ generate_triangles :: proc(cube: []u8, offset: [3]f32, scale: f32) -> [][3][3]f3
 	return triangles[:]
 }
 
+cube_corner_pos_from_index :: proc(index: int) -> [3]f32 {
+	base_positions := [][3]f32{{}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1}}
+
+	top_offset := [3]f32{0, 1, 0}
+
+	if index < 4 {
+		return base_positions[index]
+	} else {
+		return base_positions[index - 4] + top_offset
+	}
+}
+
 main :: proc() {
-	rl.InitWindow(1080, 720, "Marching Cubes")
+	rl.InitWindow(1280, 720, "Marching Cubes")
 
 	camera := rl.Camera {
-		position   = {-1.25, 0.5, -0.8},
+		position   = {-1.25, 0.7, -0.8},
 		target     = {0.5, 0.5, 0.5},
 		up         = {0, 1, 0},
 		fovy       = 85,
@@ -141,13 +156,33 @@ main :: proc() {
 	rl.DisableCursor()
 	rl.SetTargetFPS(60)
 
-	render_texture := rl.LoadRenderTexture(1080, 720)
+	render_texture := rl.LoadRenderTexture(1280, 720)
 	defer rl.UnloadRenderTexture(render_texture)
 
-	cube := cube_from_mask(0b10000000)
+	// cube := cube_from_mask(0b00000000)
+	// triangles := generate_triangles(cube[:], {}, 1)
+	mask: u8
+	timer: f32
+	started := false
+	cube := cube_from_mask(mask)
+	fmt.println("cube:", cube)
 	triangles := generate_triangles(cube[:], {}, 1)
 
 	for !rl.WindowShouldClose() {
+		if started {
+			timer += rl.GetFrameTime()
+		}
+		if rl.IsKeyPressed(rl.KeyboardKey.N) {
+			started = true
+		}
+		if timer >= 0.6 {
+			timer = 0
+			mask += 1
+			mask = mask % u8(255)
+			cube = cube_from_mask(mask)
+			triangles = generate_triangles(cube[:], {}, 1)
+		}
+
 		rl.UpdateCamera(&camera, rl.CameraMode.ORBITAL)
 
 		rl.BeginTextureMode(render_texture)
@@ -164,6 +199,19 @@ main :: proc() {
 					rl.DrawLine3D(t.y, t.z, rl.GREEN)
 					rl.DrawLine3D(t.z, t.x, rl.WHITE)
 				}
+
+				for corner, i in cube {
+					pos := cube_corner_pos_from_index(i)
+					if corner >= 8 {
+						rl.DrawCubeV(pos, {0.05, 0.05, 0.05}, rl.RED)
+					} else {
+						rl.DrawCubeV(pos, {0.05, 0.05, 0.05}, rl.BLUE)
+					}
+				}
+
+				rl.DrawLine3D({}, {0.1, 0, 0}, rl.BLUE)
+				rl.DrawLine3D({}, {0, 0.1, 0}, rl.GREEN)
+				rl.DrawLine3D({}, {0, 0, 0.1}, rl.RED)
 			}
 			rl.EndMode3D()
 		}
@@ -175,15 +223,15 @@ main :: proc() {
 			rl.DrawTexturePro(
 				render_texture.texture,
 				{0, 0, f32(render_texture.texture.width), -f32(render_texture.texture.height)},
-				{0, 0, 1080, 720},
+				{0, 0, 1280, 720},
 				{0, 0},
 				0,
 				rl.WHITE,
 			)
 
-
+			s := fmt.ctprintf("Variant: %d", mask)
+			rl.DrawText(s, 4, 4, 10, rl.WHITE)
 		}
 		rl.EndDrawing()
-
 	}
 }
